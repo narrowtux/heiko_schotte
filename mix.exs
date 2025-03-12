@@ -23,7 +23,7 @@ defmodule HhDiscordApp.MixProject do
   # Run "mix help deps" to learn about dependencies.
   defp deps do
     [
-      {:nostrum, "~> 0.8"}
+      {:nostrum, "~> 0.10.4"}
     ]
   end
 end

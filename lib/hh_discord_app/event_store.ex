@@ -22,12 +22,12 @@ defmodule HhDiscordApp.EventStore do
   end
 
   def handle_continue(_, state) do
-    case Api.get_guild_scheduled_events(@guild_id) do
+    case Api.Guild.scheduled_events(@guild_id) do
       {:ok, scheduled_events} ->
         for event <- scheduled_events do
           :ets.insert(:guild_events, {event.id, event.name, event.guild_id})
 
-          case Api.get_guild_scheduled_event_users(@guild_id, event.id) do
+          case Api.ScheduledEvent.users(@guild_id, event.id) do
             {:ok, users} ->
               for user <- users do
                 :ets.insert(:guild_event_users, {event.id, user.user.id})

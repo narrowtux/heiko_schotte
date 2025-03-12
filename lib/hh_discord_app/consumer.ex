@@ -14,8 +14,14 @@ defmodule HhDiscordApp.Consumer do
 
   def handle_event({scheduled_event, msg, _ws_state})
       when scheduled_event in @event_store_delegate do
-    IO.inspect({scheduled_event, msg})
     HhDiscordApp.EventStore.handle_event({scheduled_event, msg})
+  end
+
+
+  def handle_event({:READY, %Nostrum.Struct.Event.Ready{} = ready, _ws_state}) do
+    for %{id: guild_id} <- ready.guilds do
+      Nostrum.Api.ApplicationCommand.create_guild_command(guild_id, HhDiscordApp.ping_scheduled_event_command_map())
+    end
   end
 
   def handle_event(
@@ -42,7 +48,7 @@ defmodule HhDiscordApp.Consumer do
         }
       }
 
-      {:ok} = Nostrum.Api.create_interaction_response(msg, response)
+      {:ok} = Nostrum.Api.Interaction.create_response(msg, response)
     else
       {:error, error} when is_binary(error) ->
         response = %{
