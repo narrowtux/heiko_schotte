@@ -81,9 +81,9 @@ defmodule HhDiscordApp.Consumer do
         DateTime.utc_now()
         |> DateTime.add(-(to || 5), :day)
 
-      # Task.start_link(fn ->
-      #   purge_messages(interaction.channel_id, before, limit || 100, starboard_threshold || 7)
-      # end)
+      Task.start_link(fn ->
+        purge_messages(interaction.channel_id, before, limit || 100, starboard_threshold || 7)
+      end)
     end
   end
 
