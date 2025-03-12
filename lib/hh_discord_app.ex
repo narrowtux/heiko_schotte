@@ -10,6 +10,7 @@ defmodule HhDiscordApp do
     %{
       name: "ping_event",
       description: "nervt alle Nutzer, die sich für ein Event interessieren mit einem Ping. Bitte verwende das nicht zu oft!",
+      default_permission: true,
       options: [
         %{
           name: "event",
@@ -25,6 +26,7 @@ defmodule HhDiscordApp do
     %{
       name: "purge_channel",
       description: "Schick mich zum Tatort, ich werde alle Nachrichten vor 5 Tagen löschen",
+      default_permission: false,
       options: [
         %{
           name: "limit",

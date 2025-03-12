@@ -24,45 +24,67 @@ defmodule HhDiscordApp.Consumer do
     end
   end
 
+  @purge_member_ids [
+    # narrowtux
+    91995529558396928,
+    # mia
+    494586788392730639,
+    #sponge
+    244851781975277570,
+    #agathe
+    266899016065744896,
+    #laurenz
+    140252855373135873
+  ]
   def handle_event(
         {:INTERACTION_CREATE, %Interaction{data: %{name: "purge_channel"}} = interaction,
          _ws_state}
       ) do
-    response = %{
-      type: 4,
-      data: %{
-        content: start_message()
+
+
+    if not interaction.member.user_id in @purge_member_ids do
+      response = %{
+        type: 4,
+        data: %{
+          content: "was willst du denn? von dir lass ich mir ja mal gar nichts sagen!"
+        }
       }
-    }
+      Nostrum.Api.Interaction.create_response(interaction, response)
+    else
+      response = %{
+        type: 4,
+        data: %{
+          content: start_message()
+        }
+      }
 
-    Nostrum.Api.Interaction.create_response(interaction, response)
+      Nostrum.Api.Interaction.create_response(interaction, response)
 
-    opts = interaction.data.options || []
+      opts = interaction.data.options || []
 
-    to = Enum.find_value(opts, fn
-      %{name: "to", value: value} when is_integer(value) -> value
-      _ -> nil
-    end)
+      to = Enum.find_value(opts, fn
+        %{name: "to", value: value} when is_integer(value) -> value
+        _ -> nil
+      end)
 
-    limit = Enum.find_value(opts, fn
-      %{name: "limit", value: value} when is_integer(value) -> value
-      _ -> nil
-    end)
+      limit = Enum.find_value(opts, fn
+        %{name: "limit", value: value} when is_integer(value) -> value
+        _ -> nil
+      end)
 
-    starboard_threshold = Enum.find_value(opts, fn
-      %{name: "starboard_threshold", value: value} when is_integer(value) -> value
-      _ -> nil
-    end)
+      starboard_threshold = Enum.find_value(opts, fn
+        %{name: "starboard_threshold", value: value} when is_integer(value) -> value
+        _ -> nil
+      end)
 
+      before =
+        DateTime.utc_now()
+        |> DateTime.add(-(to || 5), :day)
 
-
-    before =
-      DateTime.utc_now()
-      |> DateTime.add(-(to || 5), :day)
-
-    Task.start_link(fn ->
-      purge_messages(interaction.channel_id, before, limit || 100, starboard_threshold || 7)
-    end)
+      # Task.start_link(fn ->
+      #   purge_messages(interaction.channel_id, before, limit || 100, starboard_threshold || 7)
+      # end)
+    end
   end
 
   def handle_event(
