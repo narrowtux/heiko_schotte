@@ -3,6 +3,7 @@ defmodule HhDiscordApp.Consumer do
 
   alias Nostrum.Struct.Interaction
   alias HhDiscordApp.EventStore
+  require Logger
 
   @event_store_delegate ~w[
     GUILD_SCHEDULED_EVENT_CREATE
@@ -17,11 +18,51 @@ defmodule HhDiscordApp.Consumer do
     HhDiscordApp.EventStore.handle_event({scheduled_event, msg})
   end
 
-
   def handle_event({:READY, %Nostrum.Struct.Event.Ready{} = ready, _ws_state}) do
-    for %{id: guild_id} <- ready.guilds do
-      Nostrum.Api.ApplicationCommand.create_guild_command(guild_id, HhDiscordApp.ping_scheduled_event_command_map())
+    for %{id: guild_id} <- ready.guilds, command <- HhDiscordApp.commands() do
+      Nostrum.Api.ApplicationCommand.create_guild_command(guild_id, command)
     end
+  end
+
+  def handle_event(
+        {:INTERACTION_CREATE, %Interaction{data: %{name: "purge_channel"}} = interaction,
+         _ws_state}
+      ) do
+    response = %{
+      type: 4,
+      data: %{
+        content: start_message()
+      }
+    }
+
+    Nostrum.Api.Interaction.create_response(interaction, response)
+
+    opts = interaction.data.options || []
+
+    to = Enum.find_value(opts, fn
+      %{name: "to", value: value} when is_integer(value) -> value
+      _ -> nil
+    end)
+
+    limit = Enum.find_value(opts, fn
+      %{name: "limit", value: value} when is_integer(value) -> value
+      _ -> nil
+    end)
+
+    starboard_threshold = Enum.find_value(opts, fn
+      %{name: "starboard_threshold", value: value} when is_integer(value) -> value
+      _ -> nil
+    end)
+
+
+
+    before =
+      DateTime.utc_now()
+      |> DateTime.add(-(to || 5), :day)
+
+    Task.start_link(fn ->
+      purge_messages(interaction.channel_id, before, limit || 100, starboard_threshold || 7)
+    end)
   end
 
   def handle_event(
@@ -92,5 +133,128 @@ defmodule HhDiscordApp.Consumer do
              "Hä? Es gibt #{more} meetups, die '#{event_id}' enthalten. Mach mal ne klare Ansage"}
         end
     end
+  end
+
+  def purge_messages(channel_id, before, limit, starboard_threshold) do
+    cutoff = DateTime.utc_now() |> DateTime.add(-13, :day)
+    tc_begin = DateTime.utc_now()
+
+    with {:ok, raw_messages} <-
+           Nostrum.Api.Channel.messages(
+             channel_id,
+             limit,
+             {:before, Nostrum.Snowflake.from_datetime!(before)}
+           ) do
+      messages = Enum.reject(raw_messages, &is_on_starboard?(&1, starboard_threshold))
+
+      batchable = Enum.filter(messages, &(DateTime.compare(&1.timestamp, cutoff) == :gt))
+      not_batchable = Enum.filter(messages, &(DateTime.compare(&1.timestamp, cutoff) != :gt))
+
+      {batchable, not_batchable} = case batchable do
+        [one] -> {[], [one | not_batchable]}
+        other -> {other, not_batchable}
+      end
+
+      Logger.info("batch-deleting #{length(batchable)} messages")
+      {:ok} = Nostrum.Api.Channel.bulk_delete_messages(channel_id, Enum.map(batchable, & &1.id))
+
+      for msg <- not_batchable do
+        Logger.info("deleting single message from #{msg.timestamp}")
+        {:ok} = Nostrum.Api.Message.delete(msg)
+      end
+
+      tc_end = DateTime.utc_now()
+
+      diff = DateTime.diff(tc_end, tc_begin, :second)
+
+      message =
+        success_message(
+          length(batchable),
+          length(not_batchable),
+          length(raw_messages) - length(messages),
+          diff
+        )
+
+      Nostrum.Api.Message.create(channel_id, content: message)
+    end
+  end
+
+  @star_emoji ~w[⭐ 💫 ✨ 🌟]
+
+  def is_on_starboard?(message, threshold \\ 1) do
+    (message.reactions || [])
+    |> Enum.filter(fn %{emoji: emoji} ->
+      is_nil(emoji.managed) && emoji.name in @star_emoji
+    end)
+    |> Enum.map(& &1.count)
+    |> Enum.sum()
+    |> Kernel.>=(threshold)
+  end
+
+  def success_message(batchable, non_batchable, starboard, duration)
+
+  def success_message(0, 0, _, _) do
+    """
+    Aber mal ehrlich – warum hat man mich hierher bestellt? Ich steh’ mitten im Raum,
+    Gummihandschuhe an, Schrubber in der Hand… und nix zu tun! Kein Fleck, keine Schmiererei,
+    gar nix. Ein Tatort, der schon glänzt – da fühl ich mich ja fast überflüssig.
+
+    Na gut, dann pack ich meine Sachen wieder ein. Auftrag (naja, mehr oder weniger) erledigt.
+    """
+  end
+
+  def success_message(batchable, 0, starboard, duration) do
+    """
+    Habe mich durch den Discord-Schauplatz gewischt und ganze #{batchable} Nachrichten entfernt –
+    lief wie 'ne frische Blutlache auf Linoleum, ein sauberer Wisch und weg.
+    Kein hartnäckiger Dreck, nix Eingetrocknetes, einfach schnelles, effizientes Aufräumen.
+
+    #{starboard_message(starboard)}
+
+    Einsatz in #{duration} Sekunden beendet, alles wieder tipptopp.
+    """
+  end
+
+  def success_message(0, non_batchable, starboard, duration) do
+    """
+    Heute war’s mühsam – keine glatten Fliesen, nur tief eingezogene Flecken im Teppich.
+    Jede einzelne der #{non_batchable} Nachrichten musste ich manuell rauskratzen,
+    wie angetrocknetes Hirn von der Tapete. Stück für Stück, Nachricht für Nachricht,
+    aber jetzt is’ alles wieder sauber.
+
+    #{starboard_message(starboard)}
+
+    Einsatz in #{duration} Sekunden abgeschlossen, war ‘ne schmutzige Nummer.
+    """
+  end
+
+  def success_message(batchable, non_batchable, starboard, duration) do
+    """
+    Habe mich durch den Discord-Schlachtplatz gewühlt und ordentlich klar Schiff gemacht.
+    #{batchable} Nachrichten ließen sich mit einem beherzten Wisch wie Blutspritzer von glatter Fliese entfernen – zack, weg.
+    Aber #{non_batchable} Nachrichten waren wie eingetrocknete Flecken im Teppich – mussten einzeln rausgekratzt werden.
+
+    #{starboard_message(starboard)}
+
+    Hat #{duration} Sekunden gedauert, aber nu is wieder alles blitzeblank.
+    """
+  end
+
+  def starboard_message(0), do: ""
+
+  def starboard_message(amount) do
+    """
+    Manche Flecken will man gar nicht wegmachen – #{amount} Nachrichten waren so beliebt, die durfte ich nicht anrühren.
+    Quasi wie 'ne schön gesicherte Blutspur für die Ermittler, die bleibt.
+    """
+  end
+
+  def start_message() do
+    """
+    Moin, ich bin Heiko Schotte, dein Tatortreiniger für digitalen Kladderadatsch.
+
+    Ich pack die Gummihandschuhe aus, jetzt wird aufgeräumt.
+    Ich mach mich ran an die Sauerei und sorge dafür, dass hier wieder alles glänzt. Gleich gibt’s 'nen sauberen Bericht.
+    """
   end
 end
